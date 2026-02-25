@@ -10,11 +10,11 @@ import re # Para achar datas no texto
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
+from selenium.common.exceptions import TimeoutException
 
 # --- SEUS DADOS ---
 # Preencha aqui para não ter que digitar toda vez
-MINHA_MATRICULA = "Login"
+MINHA_MATRICULA = "LOGIN"
 MINHA_SENHA = "Cemig"
 
 # 1. Configuração Inicial
@@ -98,23 +98,35 @@ try:
     botao_pesquisar = driver.find_element(By.ID, "btnPesquisarFicha")
     botao_pesquisar.click()
     
-    print(">>> Pesquisa enviada! O robô vai esperar 25 segundos pela tabela...")
-    time.sleep(25) # Tempo para o GEDEX carregar os resultados
+    print(">>> Pesquisa enviada! Aguardando a tabela aparecer (Automático)...")
+    try:
+        # Configura um "vigia" que espera no MÁXIMO 30 segundos
+        wait = WebDriverWait(driver, 30)
+    
+    # A REGRA DE OURO:
+    # "Espere até que apareça Pelo Menos Uma Linha que tenha o botão de Workflow"
+    # Assim garantimos que os dados carregaram antes de seguir.
+        wait.until(EC.presence_of_element_located((By.XPATH, "//tr[.//span[@title='WORKFLOW']]")))
+    except Exception as e:
+        print("ALERTA: A tabela demorou mais de 30s ou não trouxe resultados.")
+    # Opcional: Se não achar nada, você pode querer parar o script ou seguir
+    
+    print(">>> Tabela detectada! Seguindo imediatamente...")
     
     # --- AQUI COMEÇA A FILTRAGEM AUTOMÁTICA DA TABELA ---
     print("\n" + "="*40)
     print("TABELA CARREGADA (ASSUMINDO). APLICANDO FILTROS DE COLUNA...")
 
-    # 1. Filtrar Coluna 9 (filtro)
-    print(" -> Filtrando coluna 9 (filtro)...")
-    filtro_coluna9 = driver.find_element(By.CSS_SELECTOR, "input[data-index='9']")
-    filtro_coluna9.clear()
-    filtro_coluna9.send_keys("filtro")
+    # 1. Filtrar Coluna 9 (supergedex)
+    print(" -> Filtrando coluna 9 (supergedex)...")
+    filtro_supergedex = driver.find_element(By.CSS_SELECTOR, "input[data-index='9']")
+    filtro_supergedex.clear()
+    filtro_supergedex.send_keys("supergedex")
     time.sleep(1) # Pequena pausa para garantir que o texto entrou
-    filtro_coluna9.send_keys(Keys.ENTER) # O Enter confirma o filtro
+    filtro_supergedex.send_keys(Keys.ENTER) # O Enter confirma o filtro
     
-    print("    [OK] Aguardando 3s para a tabela atualizar...")
-    time.sleep(3) 
+    print("    [OK] Aguardando 1.5s para a tabela atualizar...")
+    time.sleep(1.5) 
 
     # 2. Filtrar Coluna 5 (SE_ELTC)
     print(" -> Filtrando coluna 5 (SE_ELTC)...")
@@ -124,8 +136,8 @@ try:
     time.sleep(1)
     filtro_eltc.send_keys(Keys.ENTER)
     
-    print("    [OK] Aguardando 3s para a tabela atualizar...")
-    time.sleep(3)
+    print("    [OK] Aguardando 1.5s para a tabela atualizar...")
+    time.sleep(1.5)
 
 except Exception as e:
     print(f"\nERRO CRÍTICO: {e}")
@@ -143,124 +155,143 @@ print("INICIANDO A EXTRAÇÃO DETALHADA (DRILL DOWN)...")
 dados_coletados = []
 
 try:
-    # Localiza as linhas que têm Workflow
-    linhas_xpath = "//tr[.//span[@title='WORKFLOW']]"
-    wait_geral = WebDriverWait(driver, 15)
-    wait_geral.until(EC.presence_of_element_located((By.XPATH, linhas_xpath)))
+    print("\n" + "="*40)
+    print("AGUARDANDO TABELA E APLICANDO FILTROS...")
+
+    # --- ETAPA 1: GARANTIR QUE A TABELA CARREGOU ---
+    wait = WebDriverWait(driver, 30)
+    # Espera até aparecer pelo menos uma linha com botão de workflow
+    wait.until(EC.presence_of_element_located((By.XPATH, "//tr[.//span[@title='WORKFLOW']]")))
+    print(">>> Tabela detectada! Aplicando filtros...")
+    time.sleep(2) # Pausa de segurança para o carregamento visual
+
+    # --- ETAPA 2: APLICAR FILTROS (ANTES DE CONTAR AS LINHAS) ---
     
+    # Filtro 1: supergedex (Coluna 9)
+    try:
+        f_supergedex = driver.find_element(By.CSS_SELECTOR, "input[data-index='9']")
+        f_supergedex.clear()
+        f_supergedex.send_keys("supergedex")
+        time.sleep(0.5)
+        f_supergedex.send_keys(Keys.ENTER)
+        print(" -> Filtro 'supergedex' aplicado.")
+        time.sleep(3) # Espera tabela atualizar
+    except Exception as e:
+        print(f" [AVISO] Falha ao filtrar supergedex: {e}")
+
+    # Filtro 2: SE_ELTC (Coluna 5)
+    try:
+        f_eltc = driver.find_element(By.CSS_SELECTOR, "input[data-index='5']")
+        f_eltc.clear()
+        f_eltc.send_keys("SE_ELTC")
+        time.sleep(0.5)
+        f_eltc.send_keys(Keys.ENTER)
+        print(" -> Filtro 'SE_ELTC' aplicado.")
+        time.sleep(3) # Espera tabela atualizar
+    except Exception as e:
+        print(f" [AVISO] Falha ao filtrar SE_ELTC: {e}")
+
+    # --- ETAPA 3: EXTRAÇÃO (AGORA COM A TABELA FILTRADA) ---
+    print("\n" + "="*40)
+    print("INICIANDO EXTRAÇÃO NOS RESULTADOS FILTRADOS...")
+
+    # Localiza as linhas visíveis AGORA
+    linhas_xpath = "//tr[.//span[@title='WORKFLOW']]"
     linhas = driver.find_elements(By.XPATH, linhas_xpath)
     total_encontrado = len(linhas)
     
-# --- MODO COMPLETO (SEM LIMITE) ---
-    # Agora o loop vai de 0 até o total de linhas encontradas na tela
-    print(f">>> Encontrei {total_encontrado} projetos. INICIANDO EXTRAÇÃO COMPLETA...")
+    print(f">>> Encontrei {total_encontrado} projetos filtrados. INICIANDO...")
 
     for i in range(total_encontrado):
-        
+        print(f"--- Processando linha {i+1} de {total_encontrado} ---")
 
         try:
-            # 1. RECAPTURA A LINHA (Anti-erro)
+            # 1. Recaptura a linha (evita erro de elemento obsoleto)
             linha_atual = driver.find_elements(By.XPATH, linhas_xpath)[i]
             
-            # 2. PEGA DESCRIÇÃO
-            try:
-                descricao = linha_atual.find_element(By.CSS_SELECTOR, "td.hidden-800").text.strip()
-            except:
-                descricao = "-"
-
-            # 3. CLIQUE ROBUSTO (Scroll + Retry)
+            # 2. Localiza o botão
             botao_workflow = linha_atual.find_element(By.CSS_SELECTOR, "span[title='WORKFLOW']")
             modal_abriu = False
             
-            for tentativa in range(3):
+            # 3. Estratégia de Clique (Scroll + Pausa + Clique JS)
+            # Rola a tela para o botão ficar no meio (Isso evita falhas de clique)
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_workflow)
+            time.sleep(1.0) # Aumentado para 1s para o site "assentar" antes de clicar
+
+            # Tentativa de Clique (Silenciosa)
+            try:
+                # Clique Principal
+                driver.execute_script("arguments[0].click();", botao_workflow)
+                
+                # Verifica se abriu em 1 segundo
                 try:
-                    # Centraliza o botão na tela
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_workflow)
-                    time.sleep(1)
-                    # Clica via Javascript
+                    WebDriverWait(driver, 1.0).until(EC.visibility_of_element_located((By.ID, "modalWorkflowFichaCorpo")))
+                    modal_abriu = True
+                except:
+                    # Se falhou (o site ignorou), clica de novo imediatamente (Reforço)
                     driver.execute_script("arguments[0].click();", botao_workflow)
-                    # Espera o modal
+                    # Agora espera o tempo normal
                     WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.ID, "modalWorkflowFichaCorpo")))
                     modal_abriu = True
-                    break 
-                except:
-                    print(f"   (Tentativa de clique {tentativa+1} falhou...)")
-            
+            except:
+                pass # Se der erro técnico, modal_abriu continua False e o script avisa abaixo
+
             if not modal_abriu:
-                print("   [ERRO] Não consegui abrir o workflow. Pulando.")
+                print("   [ERRO CRÍTICO] O modal não abriu. Pulando linha.")
                 continue
 
-            # --- 4. DENTRO DO MODAL ---
-            # Pequena pausa para garantir que os textos carregaram dentro do modal
-            time.sleep(1.5)
+            # --- DENTRO DO MODAL ---
+            time.sleep(1.5) # Pausa para os textos do modal carregarem
             elemento_modal = driver.find_element(By.ID, "modalWorkflowFichaCorpo")
             
-            # --- NOVA CAPTURA DE DESCRIÇÃO (ID: modalWorkflowFichaTituloTitulo) ---
+            # A) Descrição (Do Título do Modal)
             descricao = "-"
             try:
-                # Pega o texto do H6 que contém o título do painel
                 descricao = driver.find_element(By.ID, "modalWorkflowFichaTituloTitulo").text.strip()
-            except:
-                pass
-            # -----------------------------------------------------------------------
+            except: pass
             
-            # DADOS BÁSICOS
+            # B) Dados Básicos
             versao = elemento_modal.get_attribute("data-rev-ficha")
             codigo = elemento_modal.get_attribute("data-name-ficha")
 
-            # --- A NOVA LÓGICA DE STATUS ---
+            # C) Status (Regra: Concluído > Edição > Aprovação)
             status_final = "INDEFINIDO"
             detalhe_status = "-"
-            
             try:
-                # PASSO 1: Checar o Rótulo Global (Canto Superior Direito)
-                # Procura a etiqueta grande (label-xlg)
+                # Checa canto superior direito
                 rotulo_global = elemento_modal.find_element(By.CSS_SELECTOR, ".widget-toolbar .label-xlg").text.upper()
                 
                 if "CONCLUÍDO" in rotulo_global:
                     status_final = "APROVADO"
                     detalhe_status = "Finalizado"
-                
                 else:
-                    # PASSO 2: Se não está concluído, olha a ÚLTIMA CAIXINHA (Topo da timeline)
-                    # Procura todas as etiquetas brancas (label-white) dentro dos itens da timeline
-                    # Como a timeline é decrescente (mais recente no topo), pegamos o item [0]
-                    etiquetas_timeline = elemento_modal.find_elements(By.CSS_SELECTOR, ".timeline-item .widget-toolbar .label-white")
-                    
-                    if etiquetas_timeline:
-                        texto_etiqueta = etiquetas_timeline[0].text.upper()
-                        detalhe_status = texto_etiqueta # Guarda o que leu para conferência
+                    # Checa histórico (item do topo)
+                    etiquetas = elemento_modal.find_elements(By.CSS_SELECTOR, ".timeline-item .widget-toolbar .label-white")
+                    if etiquetas:
+                        texto_etiqueta = etiquetas[0].text.upper()
+                        detalhe_status = texto_etiqueta
                         
-                        if "EDIÇÃO" in texto_etiqueta:
-                            status_final = "REPROVADO"
-                        elif "APROVAÇÃO" in texto_etiqueta:
-                            status_final = "EM ANÁLISE"
-                        else:
-                            status_final = f"EM ANDAMENTO ({texto_etiqueta})"
+                        if "EDIÇÃO" in texto_etiqueta: status_final = "REPROVADO"
+                        elif "APROVAÇÃO" in texto_etiqueta: status_final = "EM ANÁLISE"
+                        else: status_final = f"EM ANDAMENTO ({texto_etiqueta})"
                     else:
-                        status_final = "EM ANDAMENTO (Sem passos)"
+                        status_final = "EM ANDAMENTO (Sem histórico)"
+            except: status_final = "ERRO LEITURA"
 
-            except Exception as e_status:
-                print(f"   [Erro na lógica de status]: {e_status}")
-                status_final = "ERRO LEITURA"
-
-            # DATAS (Início e Atualização)
-            data_inicio = "N/D"
-            try:
-                data_inicio = elemento_modal.find_element(By.XPATH, ".//small[contains(., 'iniciado em')]//b").text
+            # D) Datas
+            data_inicio = "-"
+            try: data_inicio = elemento_modal.find_element(By.XPATH, ".//small[contains(., 'iniciado em')]//b").text
             except: pass
 
-            data_atualizacao = "N/D"
+            data_atualizacao = "-"
             try:
-                # Pega a primeira data que aparece na timeline (a mais recente)
                 datas = elemento_modal.find_elements(By.CSS_SELECTOR, ".timeline-label b")
-                if datas:
-                    data_atualizacao = datas[0].text
+                if datas: data_atualizacao = datas[0].text
             except: pass
 
-            print(f"   -> {codigo} | {status_final} (Baseado em: {detalhe_status})")
+            print(f"   -> {codigo} | {status_final} | {data_atualizacao}")
 
-            # SALVAR
+            # Salvar na memória
             dados_coletados.append({
                 "Código": codigo,
                 "Versão": versao,
@@ -271,31 +302,36 @@ try:
                 "Última Atualização": data_atualizacao
             })
 
-            # 5. FECHAR MODAL
+            # FECHAR MODAL
             webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
-            time.sleep(1.5)
+            
+            # Espera o modal sumir (Crucial para não clicar errado na próxima)
+            try:
+                WebDriverWait(driver, 3).until(EC.invisibility_of_element_located((By.ID, "modalWorkflowFichaCorpo")))
+            except:
+                time.sleep(1) # Sleep de segurança se o wait falhar
 
         except Exception as e:
-            print(f"   [ERRO GERAL LINHA {i+1}]: {e}")
+            print(f"   [ERRO NA LINHA {i+1}]: {e}")
+            # Tenta fechar modal se der erro
             try: webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
             except: pass
 
-    # EXPORTAR
+    # --- SALVAR NO EXCEL ---
     if dados_coletados:
         df = pd.DataFrame(dados_coletados)
-        # Reordenando colunas para facilitar leitura
+        # Ordena as colunas
         cols = ["Código", "Versão", "Status", "Detalhe Etiqueta", "Data Início", "Última Atualização", "Descrição"]
-        # Filtra só as colunas que realmente existem
         cols_finais = [c for c in cols if c in df.columns]
         df = df[cols_finais]
         
-        df.to_excel("Relatorio_GEDEX_Status_Corrigido.xlsx", index=False)
-        print("\nSUCESSO: Relatorio_GEDEX_Status_Corrigido.xlsx gerado!")
+        df.to_excel("Relatorio_GEDEX_Final.xlsx", index=False)
+        print("\nSUCESSO: Relatorio_GEDEX_Final.xlsx gerado!")
     else:
-        print("\nNenhum dado coletado.")
+        print("\nNenhum dado foi coletado.")
 
 except Exception as e:
-    print("ERRO CRÍTICO:")
+    print("ERRO CRÍTICO NO SCRIPT:")
     traceback.print_exc()
 
 input("Pressione ENTER para encerrar...")
