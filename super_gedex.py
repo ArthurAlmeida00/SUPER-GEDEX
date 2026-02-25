@@ -1,335 +1,301 @@
+import pandas as pd
+import traceback
+import time
+import sys
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By 
-import time
-import traceback
+from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-import pandas as pd 
-import re
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
 
-# ---  DADOS ---
+# ==============================================================================
+# ### ÁREA DE CONFIGURAÇÃO DO USUÁRIO ###
+# ==============================================================================
 
-MINHA_MATRICULA = "LOGIN"
-MINHA_SENHA = "Cemig"
+# 1. Login e Senha
+MINHA_MATRICULA = "SEU_LOGIN"
+MINHA_SENHA     = "SUA_SENHA"
 
-# 1. Configuração Inicial
-print("Iniciando o Robô...")
-service = Service(ChromeDriverManager().install())
-driver = webdriver.Chrome(service=service)
+# 2. Código da Subestação (O que será digitado na busca principal)
+CODIGO_SUBESTACAO = "xxxxx"  # Mude aqui para 22245 ou qualquer outro
 
-# 2. Ação: Entra no site
-link_do_favorito = "https://ged.cemig.com.br/Account/Login" 
+# 3. Filtro de Projeto (Coluna 5)
+# Descomente (tire o #) da linha que você quer usar e comente as outras:
+FILTRO_PROJETO = "SE_ELTC"
+# FILTRO_PROJETO = "EQPRIMÁRIOS"
+# FILTRO_PROJETO = "EQSECUNDÁRIOS"
+# FILTRO_PROJETO = "TRANSF"
+# FILTRO_PROJETO = ""  # Deixe vazio aspas duplas "" se não quiser filtrar nada nessa coluna
 
-print(f"Indo para: {link_do_favorito}")
-driver.get(link_do_favorito)
+# 4. Outras Configurações
+SALVAR_A_CADA = 20   # Salva backup a cada X linhas
 
-# 3. Ação: Preencher Login (A parte nova)
-try:
-    print("Tentando preencher credenciais...")
+# ==============================================================================
+
+def iniciar_driver():
+    print("Iniciando Driver...")
+    # O ChromeDriverManager é ótimo para executáveis pois baixa o driver correto automaticamente
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service)
+    driver.maximize_window()
+    return driver
+
+def fazer_login(driver):
+    print("Acessando sistema...")
+    driver.get("https://ged.cemig.com.br/Account/Login")
     
-    # Procura o campo com ID="Login" e escreve a matrícula
-    driver.find_element(By.ID, "Login").send_keys(MINHA_MATRICULA)
-    
-    # Procura o campo com ID="Senha" e escreve a senha
-    driver.find_element(By.ID, "Senha").send_keys(MINHA_SENHA)
-    
-    print(">>> Sucesso! Matrícula e Senha preenchidas.")
-    
-except Exception as e:
-    print(f"Erro ao tentar preencher: {e}")
-
-# 4. Pausa para o Humano (Captcha)
-print("\n" + "="*40)
-print("LOGUE")
-print("="*40 + "\n")
-
-input("SE LOGADO PRESSIONE ENTER")
-
-print("Logado! Navegando para Pesquisa Avançada...")
-url_pesquisa = "https://ged.cemig.com.br/Ficha/PesquisaAvancada"
-driver.get(url_pesquisa)
-
-# --- CORREÇÃO 1: Espera a página carregar antes de tentar preencher ---
-time.sleep(3) 
-
-print("\n" + "="*40)
-print("PREENCHENDO FILTROS SOZINHO...")
-
-try:
-    # 1. Checkbox "Remover Paginação"
     try:
-        checkbox = driver.find_element(By.ID, "RemoverPaginacao")
-        if not checkbox.is_selected():
-            checkbox.click()
-            print(" -> Checkbox 'Remover Paginação' marcado.")
-    except:
-        pass 
+        driver.find_element(By.ID, "Login").send_keys(MINHA_MATRICULA)
+        driver.find_element(By.ID, "Senha").send_keys(MINHA_SENHA)
+    except: pass
+    
+    print("\n" + "="*50)
+    print(">>> AÇÃO NECESSÁRIA: RESOLVA O CAPTCHA E ENTRE <<<")
+    print("O robô está aguardando você entrar no sistema...")
+    print("="*50 + "\n")
 
-    # 2. Campo Limite
-    print(" -> Definindo limite para 1000...")
-    campo_limite = driver.find_element(By.ID, "MaximoARecuperar")
-    campo_limite.clear()
-    campo_limite.send_keys("1000")
-
-    # 3. Campo Código 
-    print(" -> Digitando código XXXXX e validando...")
-    campo_codigo = driver.find_element(By.XPATH, "//input[@placeholder='Código ou Nome da Aplicação']")
-    campo_codigo.clear()
-    campo_codigo.send_keys("XXXXX")
-    
-    # PAUSA CRÍTICA: Espera 2 segundos para o menu azul aparecer "embaixo" do texto
-    time.sleep(2) 
-    
-    # Pressiona TAB para selecionar a opção que apareceu
-    print(" -> Pressionando TAB para confirmar...")
-    campo_codigo.send_keys(Keys.TAB)
-    
-except Exception as e:
-    print(f"ERRO AO PREENCHER FILTROS: {e}")
-
-# 6. Clicar no botão PESQUISAR e Iniciar Fluxo Contínuo
-try:
-    print("O Robô está clicando no botão Pesquisar...")
-    botao_pesquisar = driver.find_element(By.ID, "btnPesquisarFicha")
-    botao_pesquisar.click()
-    
-    print(">>> Pesquisa enviada! Aguardando a tabela aparecer (Automático)...")
+    # Espera a URL mudar (Sair do Login)
     try:
-        # Configura um "vigia" que espera no MÁXIMO 30 segundos
-        wait = WebDriverWait(driver, 30)
+        WebDriverWait(driver, 600).until( # Aumentei para 10 min de tolerância
+            lambda d: "Account/Login" not in d.current_url
+        )
+        print("\n>>> LOGIN DETECTADO! Iniciando automação...\n")
+        time.sleep(2)
+    except TimeoutException:
+        print("Tempo esgotado! O login não foi detectado.")
+        sys.exit() # Encerra o programa
+
+def configurar_pesquisa_e_filtros(driver, cod_subestacao, filtro_proj):
+    print("Navegando para Pesquisa Avançada...")
+    driver.get("https://ged.cemig.com.br/Ficha/PesquisaAvancada")
     
-     
-        wait.until(EC.presence_of_element_located((By.XPATH, "//tr[.//span[@title='WORKFLOW']]")))
+    # Espera formulário
+    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "MaximoARecuperar")))
+
+    try:
+        print(f"Configurando busca para Subestação: {cod_subestacao}...")
+        
+        # Checkbox Paginação
+        try:
+            chk = driver.find_element(By.ID, "RemoverPaginacao")
+            if not chk.is_selected(): chk.click()
+        except: pass
+
+        # Limite
+        driver.find_element(By.ID, "MaximoARecuperar").clear()
+        driver.find_element(By.ID, "MaximoARecuperar").send_keys("1000")
+
+        # Código (Variável)
+        cod = driver.find_element(By.XPATH, "//input[@placeholder='Código ou Nome da Aplicação']")
+        cod.clear()
+        cod.send_keys(cod_subestacao)
+        time.sleep(2)
+        cod.send_keys(Keys.TAB)
+
+        # Clicar Pesquisar
+        print("Clicando em Pesquisar...")
+        driver.find_element(By.ID, "btnPesquisarFicha").click()
+        
+        # Espera TABELA
+        print("Aguardando tabela aparecer...")
+        WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.XPATH, "//tr[.//span[@title='WORKFLOW']]")))
+        time.sleep(3)
+
+        # APLICAR FILTROS DE COLUNA
+        print("Aplicando filtros de coluna...")
+        
+        # 1. Filtro Fixo: supergedex (Coluna 9)
+        # Se quiser parametrizar esse também, me avise
+        try:
+            f1 = driver.find_element(By.CSS_SELECTOR, "input[data-index='9']")
+            f1.clear(); f1.send_keys("supergedex"); time.sleep(0.5); f1.send_keys(Keys.ENTER)
+            time.sleep(1.5)
+        except: print("Aviso: Erro ao filtrar supergedex")
+
+        # 2. Filtro Variável: PROJETO (Coluna 5)
+        if filtro_proj and filtro_proj.strip() != "":
+            print(f" -> Filtrando coluna 5 por: {filtro_proj}")
+            try:
+                f2 = driver.find_element(By.CSS_SELECTOR, "input[data-index='5']")
+                f2.clear(); f2.send_keys(filtro_proj); time.sleep(0.5); f2.send_keys(Keys.ENTER)
+                time.sleep(1.5)
+            except: print(f"Aviso: Erro ao filtrar {filtro_proj}")
+        else:
+            print(" -> Nenhum filtro de projeto selecionado (Coluna 5 vazia).")
+        
+        print("Configuração concluída!")
+
     except Exception as e:
-        print("ALERTA: A tabela demorou mais de 30s ou não trouxe resultados.")
-   
+        print(f"Erro na configuração da pesquisa: {e}")
+
+def extrair_dados_blindado(driver, deve_baixar_descricao):
+    print("\nINICIANDO EXTRAÇÃO...")
+    if not deve_baixar_descricao:
+        print(" -> MODO RÁPIDO ATIVADO: Descrições serão ignoradas.")
     
-    print(">>> Tabela detectada! Seguindo imediatamente...")
+    dados = []
     
-    # --- AQUI COMEÇA A FILTRAGEM AUTOMÁTICA DA TABELA ---
-    print("\n" + "="*40)
-    print("TABELA CARREGADA (ASSUMINDO). APLICANDO FILTROS DE COLUNA...")
-
-    # 1. Filtrar Coluna 9 (supergedex)
-    print(" -> Filtrando coluna 9 (supergedex)...")
-    filtro_supergedex = driver.find_element(By.CSS_SELECTOR, "input[data-index='9']")
-    filtro_supergedex.clear()
-    filtro_supergedex.send_keys("supergedex")
-    time.sleep(1) # Pequena pausa para garantir que o texto entrou
-    filtro_supergedex.send_keys(Keys.ENTER) # O Enter confirma o filtro
-    
-    print("    [OK] Aguardando 1.5s para a tabela atualizar...")
-    time.sleep(1.5) 
-
-    # 2. Filtrar Coluna 5 (SE_ELTC)
-    print(" -> Filtrando coluna 5 (SE_ELTC)...")
-    filtro_eltc = driver.find_element(By.CSS_SELECTOR, "input[data-index='5']")
-    filtro_eltc.clear()
-    filtro_eltc.send_keys("SE_ELTC")
-    time.sleep(1)
-    filtro_eltc.send_keys(Keys.ENTER)
-    
-    print("    [OK] Aguardando 1.5s para a tabela atualizar...")
-    time.sleep(1.5)
-
-except Exception as e:
-    print(f"\nERRO CRÍTICO: {e}")
-    print("Dica: Se o erro for 'no such element', aumente o tempo de espera de 15s para 20s.")
-
-# --- CHECKPOINT FINAL ---
-print("\n" + "="*40)
-print("SUCESSO: Filtros aplicados.")
-print("Olhe para o Chrome: sobraram apenas os itens corretos?")
-print("="*40 + "\n")
-
-print("INICIANDO A EXTRAÇÃO DETALHADA (DRILL DOWN)...")
-# Lista para guardar os dados
-
-dados_coletados = []
-
-try:
-    print("\n" + "="*40)
-    print("AGUARDANDO TABELA E APLICANDO FILTROS...")
-
-    # --- ETAPA 1: GARANTIR QUE A TABELA CARREGOU ---
-    wait = WebDriverWait(driver, 30)
-    # Espera até aparecer pelo menos uma linha com botão de workflow
-    wait.until(EC.presence_of_element_located((By.XPATH, "//tr[.//span[@title='WORKFLOW']]")))
-    print(">>> Tabela detectada! Aplicando filtros...")
-    time.sleep(2) # Pausa de segurança para o carregamento visual
-
-    # --- ETAPA 2: APLICAR FILTROS (ANTES DE CONTAR AS LINHAS) ---
-    
-    # Filtro 1: supergedex (Coluna 9)
-    try:
-        f_supergedex = driver.find_element(By.CSS_SELECTOR, "input[data-index='9']")
-        f_supergedex.clear()
-        f_supergedex.send_keys("supergedex")
-        time.sleep(0.5)
-        f_supergedex.send_keys(Keys.ENTER)
-        print(" -> Filtro 'supergedex' aplicado.")
-        time.sleep(3) # Espera tabela atualizar
-    except Exception as e:
-        print(f" [AVISO] Falha ao filtrar supergedex: {e}")
-
-    # Filtro 2: SE_ELTC (Coluna 5)
-    try:
-        f_eltc = driver.find_element(By.CSS_SELECTOR, "input[data-index='5']")
-        f_eltc.clear()
-        f_eltc.send_keys("SE_ELTC")
-        time.sleep(0.5)
-        f_eltc.send_keys(Keys.ENTER)
-        print(" -> Filtro 'SE_ELTC' aplicado.")
-        time.sleep(3) # Espera tabela atualizar
-    except Exception as e:
-        print(f" [AVISO] Falha ao filtrar SE_ELTC: {e}")
-
-    # --- ETAPA 3: EXTRAÇÃO (AGORA COM A TABELA FILTRADA) ---
-    print("\n" + "="*40)
-    print("INICIANDO EXTRAÇÃO NOS RESULTADOS FILTRADOS...")
-
-    # Localiza as linhas visíveis AGORA
     linhas_xpath = "//tr[.//span[@title='WORKFLOW']]"
     linhas = driver.find_elements(By.XPATH, linhas_xpath)
-    total_encontrado = len(linhas)
-    
-    print(f">>> Encontrei {total_encontrado} projetos filtrados. INICIANDO...")
+    total = len(linhas)
+    print(f"Total de itens encontrados: {total}")
 
-    for i in range(total_encontrado):
-        print(f"--- Processando linha {i+1} de {total_encontrado} ---")
-
+    for i in range(total):
         try:
-            # 1. Recaptura a linha (evita erro de elemento obsoleto)
+            print(f"Processando {i+1}/{total}...", end="\r")
+            
+            # 1. Recaptura
             linha_atual = driver.find_elements(By.XPATH, linhas_xpath)[i]
+            btn = linha_atual.find_element(By.CSS_SELECTOR, "span[title='WORKFLOW']")
             
-            # 2. Localiza o botão
-            botao_workflow = linha_atual.find_element(By.CSS_SELECTOR, "span[title='WORKFLOW']")
+            # 2. Clique Blindado
             modal_abriu = False
-            
-            # 3. Estratégia de Clique (Scroll + Pausa + Clique JS)
-            # Rola a tela para o botão ficar no meio (Isso evita falhas de clique)
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_workflow)
-            time.sleep(1.0) # Aumentado para 1s para o site "assentar" antes de clicar
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+            time.sleep(1.0) 
 
-            # Tentativa de Clique (Silenciosa)
             try:
-                # Clique Principal
-                driver.execute_script("arguments[0].click();", botao_workflow)
-                
-                # Verifica se abriu em 1 segundo
+                driver.execute_script("arguments[0].click();", btn)
                 try:
                     WebDriverWait(driver, 1.0).until(EC.visibility_of_element_located((By.ID, "modalWorkflowFichaCorpo")))
                     modal_abriu = True
                 except:
-                    # Se falhou (o site ignorou), clica de novo imediatamente (Reforço)
-                    driver.execute_script("arguments[0].click();", botao_workflow)
-                    # Agora espera o tempo normal
+                    driver.execute_script("arguments[0].click();", btn)
                     WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.ID, "modalWorkflowFichaCorpo")))
                     modal_abriu = True
-            except:
-                pass # Se der erro técnico, modal_abriu continua False e o script avisa abaixo
+            except: pass
 
             if not modal_abriu:
-                print("   [ERRO CRÍTICO] O modal não abriu. Pulando linha.")
+                print(f"\n[ERRO CRÍTICO] Modal não abriu na linha {i+1}")
                 continue
 
-            # --- DENTRO DO MODAL ---
-            time.sleep(1.5) # Pausa para os textos do modal carregarem
-            elemento_modal = driver.find_element(By.ID, "modalWorkflowFichaCorpo")
+            # 3. Extração
+            time.sleep(1.5)
+            modal = driver.find_element(By.ID, "modalWorkflowFichaCorpo")
             
-            # A) Descrição (Do Título do Modal)
+            codigo = modal.get_attribute("data-name-ficha")
+            versao = modal.get_attribute("data-rev-ficha")
+            
+            # --- LÓGICA DA PERGUNTA INICIAL ---
             descricao = "-"
+            if deve_baixar_descricao:
+                try: 
+                    descricao = driver.find_element(By.ID, "modalWorkflowFichaTituloTitulo").text.strip()
+                except: pass
+            else:
+                descricao = "Não Solicitado"
+
+            # Status
+            status = "INDEFINIDO"
+            detalhe = "-"
             try:
-                descricao = driver.find_element(By.ID, "modalWorkflowFichaTituloTitulo").text.strip()
+                html_modal = modal.get_attribute("innerHTML").upper()
+                if "CONCLUÍDO" in html_modal and "LABEL-XLG" in html_modal:
+                    status = "APROVADO"
+                    detalhe = "Finalizado"
+                else:
+                    tags = modal.find_elements(By.CSS_SELECTOR, ".timeline-item .widget-toolbar .label-white")
+                    if tags:
+                        txt = tags[0].text.upper()
+                        detalhe = txt
+                        if "EDIÇÃO" in txt: status = "REPROVADO"
+                        elif "APROVAÇÃO" in txt: status = "EM ANÁLISE"
+                        else: status = f"EM ANDAMENTO ({txt})"
+                    else:
+                        status = "EM ANDAMENTO"
+            except: status = "ERRO"
+
+            # Datas
+            dt_att = "-"
+            try:
+                dts = modal.find_elements(By.CSS_SELECTOR, ".timeline-label b")
+                if dts: dt_att = dts[0].text
             except: pass
             
-            # B) Dados Básicos
-            versao = elemento_modal.get_attribute("data-rev-ficha")
-            codigo = elemento_modal.get_attribute("data-name-ficha")
-
-            # C) Status (Regra: Concluído > Edição > Aprovação)
-            status_final = "INDEFINIDO"
-            detalhe_status = "-"
-            try:
-                # Checa canto superior direito
-                rotulo_global = elemento_modal.find_element(By.CSS_SELECTOR, ".widget-toolbar .label-xlg").text.upper()
-                
-                if "CONCLUÍDO" in rotulo_global:
-                    status_final = "APROVADO"
-                    detalhe_status = "Finalizado"
-                else:
-                    # Checa histórico (item do topo)
-                    etiquetas = elemento_modal.find_elements(By.CSS_SELECTOR, ".timeline-item .widget-toolbar .label-white")
-                    if etiquetas:
-                        texto_etiqueta = etiquetas[0].text.upper()
-                        detalhe_status = texto_etiqueta
-                        
-                        if "EDIÇÃO" in texto_etiqueta: status_final = "REPROVADO"
-                        elif "APROVAÇÃO" in texto_etiqueta: status_final = "EM ANÁLISE"
-                        else: status_final = f"EM ANDAMENTO ({texto_etiqueta})"
-                    else:
-                        status_final = "EM ANDAMENTO (Sem histórico)"
-            except: status_final = "ERRO LEITURA"
-
-            # D) Datas
-            data_inicio = "-"
-            try: data_inicio = elemento_modal.find_element(By.XPATH, ".//small[contains(., 'iniciado em')]//b").text
+            dt_ini = "-"
+            try: dt_ini = modal.find_element(By.XPATH, ".//small[contains(., 'iniciado em')]//b").text
             except: pass
 
-            data_atualizacao = "-"
-            try:
-                datas = elemento_modal.find_elements(By.CSS_SELECTOR, ".timeline-label b")
-                if datas: data_atualizacao = datas[0].text
-            except: pass
-
-            print(f"   -> {codigo} | {status_final} | {data_atualizacao}")
-
-            # Salvar na memória
-            dados_coletados.append({
+            dados.append({
                 "Código": codigo,
                 "Versão": versao,
                 "Descrição": descricao,
-                "Status": status_final,
-                "Detalhe Etiqueta": detalhe_status,
-                "Data Início": data_inicio,
-                "Última Atualização": data_atualizacao
+                "Status": status,
+                "Detalhe": detalhe,
+                "Data Início": dt_ini,
+                "Última Atualização": dt_att
             })
 
-            # FECHAR MODAL
+            # Fechar
             webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
-            
-            # Espera o modal sumir (Crucial para não clicar errado na próxima)
             try:
                 WebDriverWait(driver, 3).until(EC.invisibility_of_element_located((By.ID, "modalWorkflowFichaCorpo")))
             except:
-                time.sleep(1) # Sleep de segurança se o wait falhar
+                time.sleep(1)
+
+            # Backup
+            if (i + 1) % SALVAR_A_CADA == 0:
+                salvar_excel(dados, "Relatorio_Parcial.xlsx")
 
         except Exception as e:
-            print(f"   [ERRO NA LINHA {i+1}]: {e}")
-            # Tenta fechar modal se der erro
+            print(f"\n[ERRO REAL NA LINHA {i+1}]")
+            traceback.print_exc()
             try: webdriver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
             except: pass
 
-    # --- SALVAR NO EXCEL ---
-    if dados_coletados:
-        df = pd.DataFrame(dados_coletados)
-        # Ordena as colunas
-        cols = ["Código", "Versão", "Status", "Detalhe Etiqueta", "Data Início", "Última Atualização", "Descrição"]
-        cols_finais = [c for c in cols if c in df.columns]
-        df = df[cols_finais]
+    return dados
+
+def salvar_excel(dados, nome_arquivo):
+    if not dados: return
+    df = pd.DataFrame(dados)
+    cols = ["Código", "Versão", "Status", "Detalhe", "Data Início", "Última Atualização", "Descrição"]
+    cols_fin = [c for c in cols if c in df.columns]
+    df = df[cols_fin]
+    df.to_excel(nome_arquivo, index=False)
+
+# ==============================================================================
+# EXECUÇÃO PRINCIPAL
+# ==============================================================================
+if __name__ == "__main__":
+    try:
+        print("="*50)
+        print("   ROBÔ GEDEX AUTOMATION - Versão 2.0")
+        print("="*50)
         
-        df.to_excel("Relatorio_GEDEX_Final.xlsx", index=False)
-        print("\nSUCESSO: Relatorio_GEDEX_Final.xlsx gerado!")
-    else:
-        print("\nNenhum dado foi coletado.")
+        # 1. Pergunta interativa inicial
+        resp_usuario = input("\n>> Deseja baixar a DESCRIÇÃO dos itens? (S/N): ").strip().upper()
+        BAIXAR_DESCRICAO = (resp_usuario == 'S')
+        
+        print(f"\nConfiguração Atual:")
+        print(f" - Subestação: {CODIGO_SUBESTACAO}")
+        print(f" - Filtro Projeto: {FILTRO_PROJETO}")
+        print(f" - Baixar Descrição: {'SIM' if BAIXAR_DESCRICAO else 'NÃO'}")
+        print("-" * 30)
 
-except Exception as e:
-    print("ERRO CRÍTICO NO SCRIPT:")
-    traceback.print_exc()
-
-input("Pressione ENTER para encerrar...")
+        driver = iniciar_driver()
+        
+        fazer_login(driver)
+        
+        # Passamos os parâmetros configurados lá em cima
+        configurar_pesquisa_e_filtros(driver, CODIGO_SUBESTACAO, FILTRO_PROJETO)
+        
+        # Passamos a escolha do usuário sobre a descrição
+        dados_finais = extrair_dados_blindado(driver, BAIXAR_DESCRICAO)
+        
+        print("\n" + "="*40)
+        nome_final = f"Relatorio_GEDEX_{CODIGO_SUBESTACAO}_{FILTRO_PROJETO}.xlsx"
+        salvar_excel(dados_finais, nome_final)
+        print(f"SUCESSO TOTAL! Arquivo salvo como: {nome_final}")
+        
+    except Exception as e:
+        print("\nERRO CRÍTICO NO PROGRAMA:")
+        traceback.print_exc()
+    finally:
+        print("\nProcesso finalizado.")
+        # O input abaixo impede que a janela feche sozinha no executável
+        input("Pressione ENTER para fechar a janela...")
+        try: driver.quit()
+        except: pass
