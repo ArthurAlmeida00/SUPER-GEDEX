@@ -1,19 +1,19 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By # <--- IMPORTANTE: Adicionei esta biblioteca
+from selenium.webdriver.common.by import By 
 import time
 import traceback
 from selenium.webdriver.common.keys import Keys
-import pandas as pd # Para criar o Excel
-import re # Para achar datas no texto
+import pandas as pd 
+import re
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
-# --- SEUS DADOS ---
-# Preencha aqui para não ter que digitar toda vez
+# ---  DADOS ---
+
 MINHA_MATRICULA = "LOGIN"
 MINHA_SENHA = "Cemig"
 
@@ -103,13 +103,11 @@ try:
         # Configura um "vigia" que espera no MÁXIMO 30 segundos
         wait = WebDriverWait(driver, 30)
     
-    # A REGRA DE OURO:
-    # "Espere até que apareça Pelo Menos Uma Linha que tenha o botão de Workflow"
-    # Assim garantimos que os dados carregaram antes de seguir.
+     
         wait.until(EC.presence_of_element_located((By.XPATH, "//tr[.//span[@title='WORKFLOW']]")))
     except Exception as e:
         print("ALERTA: A tabela demorou mais de 30s ou não trouxe resultados.")
-    # Opcional: Se não achar nada, você pode querer parar o script ou seguir
+   
     
     print(">>> Tabela detectada! Seguindo imediatamente...")
     
